@@ -1,7 +1,5 @@
 #include <Arduino.h>
 #include <Servo.h>
-#include <DFRobot_BMI160.h>
-#include <Wire.h>
 
 // Motors
 #define LEFT_MOTOR_PIN_F 11
@@ -27,10 +25,21 @@
 // Settings
 #define MAX_ATTACK_SPEED 200
 #define EDGE_THRESHOLD 100
-
+#define EDGE_TURN_SPEED 200
+#define EDGE_BACK_SPEED -100
+#define EDGE_BACK_RECOVER_SPEED -170
+#define EDGE_TURN_TIMEOUT_MS 500
+#define EDGE_SETTLE_MS 100
+#define EDGE_REVERSE_MS 100
+#define SEEK_LEFT_SPEED -50
+#define SEEK_RIGHT_SPEED 50
+#define CENTER_TURN_SPEED 150
+#define CENTER_TURN_TIMEOUT_MS 500
 
 int startLeftEdge = 0;
 int startRightEdge = 0;
+#define LEFT 0
+#define RIGHT 1
 
 void waitButtonPressAndRelease() {
   while (digitalRead(BUTTON_PIN) == HIGH) {
@@ -44,36 +53,34 @@ void waitButtonPressAndRelease() {
   }
 }
 
-void LeftMotor(int speed) {
+void setMotor(uint8_t pinForward, uint8_t pinBackward, int speed) {
   if (speed > 0) {
-    analogWrite(LEFT_MOTOR_PIN_F, speed);
-    analogWrite(LEFT_MOTOR_PIN_B, 0);
-
+    analogWrite(pinForward, speed);
+    analogWrite(pinBackward, 0);
   } else if (speed < 0) {
-    analogWrite(LEFT_MOTOR_PIN_F, 0);
-    analogWrite(LEFT_MOTOR_PIN_B, speed * -1);
-
+    analogWrite(pinForward, 0);
+    analogWrite(pinBackward, -speed);
   } else {
-    analogWrite(LEFT_MOTOR_PIN_F, 0);
-    analogWrite(LEFT_MOTOR_PIN_B, 0);
-
+    analogWrite(pinForward, 0);
+    analogWrite(pinBackward, 0);
   }
 }
 
+void LeftMotor(int speed) {
+  setMotor(LEFT_MOTOR_PIN_F, LEFT_MOTOR_PIN_B, speed);
+}
+
 void RightMotor(int speed) {
-  if (speed > 0) {
-    analogWrite(RIGHT_MOTOR_PIN_F, speed);
-    analogWrite(RIGHT_MOTOR_PIN_B, 0);
+  setMotor(RIGHT_MOTOR_PIN_F, RIGHT_MOTOR_PIN_B, speed);
+}
 
-  } else if (speed < 0) {
-    analogWrite(RIGHT_MOTOR_PIN_F, 0);
-    analogWrite(RIGHT_MOTOR_PIN_B, speed * -1);
+void robotControl(int leftSpeed, int rightSpeed) {
+  LeftMotor(leftSpeed);
+  RightMotor(rightSpeed);
+}
 
-  } else {
-    analogWrite(RIGHT_MOTOR_PIN_F, 0);
-    analogWrite(RIGHT_MOTOR_PIN_B, 0);
-
-  }
+void stopMotors() {
+  robotControl(0, 0);
 }
 
 void CalibrateEdgeSensors() {
@@ -83,12 +90,47 @@ void CalibrateEdgeSensors() {
 
 bool isLeftEdge() {
   return abs(analogRead(EDGE_LEFT) - startLeftEdge) > EDGE_THRESHOLD;
-
 }
 
 bool isRightEdge() {
   return abs(analogRead(EDGE_RIGHT) - startRightEdge) > EDGE_THRESHOLD;
-  
+}
+
+void waitUntilEdgeClears(bool (*edgeDetected)()) {
+  while (edgeDetected()) {
+    robotControl(EDGE_BACK_RECOVER_SPEED, EDGE_BACK_RECOVER_SPEED);
+  }
+}
+
+void handleEdge(bool leftEdge) {
+  const uint32_t detectTimestamp = millis();
+  if (leftEdge) {
+    robotControl(0, EDGE_TURN_SPEED);
+    while (!isRightEdge()) {
+      if (millis() - detectTimestamp > EDGE_TURN_TIMEOUT_MS) {
+        break;
+      }
+    }
+  } else {
+    robotControl(EDGE_TURN_SPEED, 0);
+    while (!isLeftEdge()) {
+      if (millis() - detectTimestamp > EDGE_TURN_TIMEOUT_MS) {
+        break;
+      }
+    }
+  }
+
+  stopMotors();
+  delay(EDGE_SETTLE_MS);
+
+  robotControl(EDGE_BACK_SPEED, EDGE_BACK_SPEED);
+  delay(EDGE_REVERSE_MS);
+
+  if (leftEdge) {
+    waitUntilEdgeClears(isLeftEdge);
+  } else {
+    waitUntilEdgeClears(isRightEdge);
+  }
 }
 
 Servo esc;
@@ -127,81 +169,37 @@ void loop() {
   Serial.println(analogRead(EDGE_RIGHT));
 
   if (isLeftEdge()) {
-    uint32_t detectTimestamp = millis();
-    LeftMotor(0);
-    RightMotor(200);
-    while (!isRightEdge()) {
-      if (millis() - detectTimestamp > 500) {
-        break;
-      }
-    }
-
-    LeftMotor(0);
-    RightMotor(0);
-    delay(100);
-
-    LeftMotor(-100);
-    RightMotor(-100);
-    delay(100);
-    
-    while (isLeftEdge()) {
-      LeftMotor(-170);
-      RightMotor(-170);
-      
-    }
+    handleEdge(LEFT);
     return;
   } 
   else if (isRightEdge()) {
-    uint32_t detectTimestamp = millis();
-    LeftMotor(200);
-    RightMotor(0);
-    while (!isLeftEdge()) {
-      if (millis() - detectTimestamp > 500) {
-        break;
-      }
-    }
-    LeftMotor(0);
-    RightMotor(0);
-    delay(100);
-    
-    LeftMotor(-100);
-    RightMotor(-100);
-    delay(100);
-    
-    while (isLeftEdge()) {
-      LeftMotor(-170);
-      RightMotor(-170);
-      
-    }
+    handleEdge(RIGHT);
     return;
   }
 
   if (!digitalRead(CENTER_IR)) {
     for (int i = 0; i < MAX_ATTACK_SPEED; i++) {
-      LeftMotor(i);
-      RightMotor(i);
+      robotControl(i, i);
       delay(1);  
     }
     while (!digitalRead(CENTER_IR) && (!isLeftEdge() && !isRightEdge()));
   }
 
   else if (!digitalRead(LEFT_CENTER_IR)) {
-    uint32_t attackTimestamp = millis();
-    LeftMotor(0);
-    RightMotor(150);
+    const uint32_t attackTimestamp = millis();
+    robotControl(0, CENTER_TURN_SPEED);
     while (digitalRead(CENTER_IR)) {
-      if (millis() - attackTimestamp > 500) {
+      if (millis() - attackTimestamp > CENTER_TURN_TIMEOUT_MS) {
         break;
       }
     }
     
   }
   else if (!digitalRead(RIGHT_CENTER_IR)) {
-    uint32_t attackTimestamp = millis();
-    LeftMotor(150);
-    RightMotor(0);
+    const uint32_t attackTimestamp = millis();
+    robotControl(CENTER_TURN_SPEED, 0);
     while (digitalRead(CENTER_IR)) {
-      if (millis() - attackTimestamp > 500) {
+      if (millis() - attackTimestamp > CENTER_TURN_TIMEOUT_MS) {
         break;
       }
     }
@@ -209,7 +207,6 @@ void loop() {
 
   }
   else {
-    LeftMotor(-50);
-    RightMotor(50);
+    robotControl(SEEK_LEFT_SPEED, SEEK_RIGHT_SPEED);
   }
 }
