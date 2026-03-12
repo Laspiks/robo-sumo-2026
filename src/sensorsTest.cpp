@@ -1,17 +1,44 @@
 #include <Wire.h>
+#include <Servo.h>
 
+// Motors
+#define LEFT_MOTOR_PIN_F 11
+#define LEFT_MOTOR_PIN_B 10
+#define RIGHT_MOTOR_PIN_F 6
+#define RIGHT_MOTOR_PIN_B 3
+
+// Sensors
+#define LEFT_IR 7
+#define RIGHT_IR 2
+#define LEFT_CENTER_IR 9
+#define RIGHT_CENTER_IR A1
+#define CENTER_IR 4
+
+#define EDGE_LEFT  A0
+#define EDGE_RIGHT A2
+
+
+// Control
 #define DIP1 A7
 #define DIP2 A6
 #define DIP3 A3
-#define BTN  8
+#define BTN 8
+#define ESC_PIN 5
 
-#define LEFT_IR          7
-#define LEFT_CENTER_IR   9
-#define CENTER_IR        4
-#define RIGHT_CENTER_IR  A1
-#define RIGHT            2
-#define LEFT_QTR         A0
-#define RIGHT_QTR        A2
+// Settings
+#define MAX_ATTACK_SPEED 255
+#define SEARCH_SPEED 120
+#define CENTER_TURN_SPEED 200
+#define EDGE_TURN_SPEED 200
+#define EDGE_BACK_SPEED -100
+#define EDGE_BACK_RECOVER_SPEED -170
+
+
+#define EDGE_THRESHOLD 100
+#define CENTER_TURN_TIMEOUT_MS 500
+#define EDGE_TURN_TIMEOUT_MS 500
+
+Servo esc;
 
 
 const int MPU = 0x68;
@@ -96,9 +123,13 @@ void setup() {
     pinMode(LEFT_CENTER_IR, INPUT);
     pinMode(CENTER_IR, INPUT);
     pinMode(RIGHT_CENTER_IR, INPUT);
-    pinMode(RIGHT, INPUT);
+    pinMode(RIGHT_IR, INPUT);
 
-
+    esc.attach(ESC_PIN, 1000, 2000);
+    esc.write(180);
+    delay(2000);
+    esc.write(0);
+    delay(1000);
 
 }
 
@@ -107,6 +138,5 @@ void loop() {
     Serial.print(" LC: "); Serial.print(!digitalRead(LEFT_CENTER_IR));
     Serial.print(" C: "); Serial.print(!digitalRead(CENTER_IR));
     Serial.print(" RC: "); Serial.print(!digitalRead(RIGHT_CENTER_IR));
-    Serial.print(" R: "); Serial.println(!digitalRead(RIGHT));
-    delay(10);
+    Serial.print(" R: "); Serial.println(!digitalRead(RIGHT_IR));
 }
